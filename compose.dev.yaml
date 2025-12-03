@@ -1,0 +1,21 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Containerfile.dev
+    depends_on:
+      - mssql
+    environment:
+      - DATABASE_URL=Driver={ODBC Driver 18 for SQL Server};Server=mssql,1433;Database=master;Uid=sa;Pwd=YourStrong@Passw0rd;TrustServerCertificate=yes
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=YourStrong@Passw0rd
+
+    volumes:
+      - mssql-data:/var/opt/mssql
+
+volumes:
+  mssql-data:
