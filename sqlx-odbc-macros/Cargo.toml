@@ -1,0 +1,31 @@
+[package]
+name = "sqlx-odbc-macros"
+documentation = "https://docs.rs/sqlx-odbc-macros"
+description = "proc macros for sqlx-odbc - SQLx ODBC driver"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
+license = { workspace = true }
+
+[package.metadata.docs.rs]
+features = ["derive"]
+
+[lib]
+proc-macro = true
+
+[features]
+derive = ["dep:heck"]
+
+[dependencies]
+heck = { version = "0.5", optional = true }
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "derive"] }
+
+[lints.clippy]
+duplicated_attributes = "allow"

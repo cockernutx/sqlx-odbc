@@ -7,7 +7,6 @@ use sqlx_core::Error;
 
 /// A column from an ODBC result set.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "offline", derive(serde::Serialize, serde::Deserialize))]
 pub struct OdbcColumn {
     pub(crate) ordinal: usize,
     pub(crate) name: UStr,

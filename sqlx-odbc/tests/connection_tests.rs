@@ -14,8 +14,8 @@
 //! connection persistence is implemented.
 
 use sqlx_odbc::odbc::{OdbcConnectOptions, OdbcConnection};
-use sqlx_core::connection::Connection;
-use sqlx_core::executor::Executor;
+use sqlx_odbc::sqlx_core::connection::Connection;
+use sqlx_odbc::sqlx_core::executor::Executor;
 
 /// Get the connection string from environment or use default for local dev
 fn get_connection_string() -> String {

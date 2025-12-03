@@ -1,7 +1,16 @@
 [package]
-name = "sqlx-odbc"
-version = "0.1.0"
-edition = "2024"
+name = "sqlx-odbc-core"
+documentation = "https://docs.rs/sqlx-odbc-core"
+description = "Core implementation for sqlx-odbc - SQLx ODBC driver"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
+license = { workspace = true }
 
 [dependencies]
 odbc-api = "20.1.0"

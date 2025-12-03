@@ -1,7 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["sqlx-odbc-core"]
+members = ["sqlx-odbc", "sqlx-odbc-core", "sqlx-odbc-macros"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = []
+homepage = "https://github.com/your-org/sqlx-odbc"
+repository = "https://github.com/your-org/sqlx-odbc"
+readme = "README.md"
+keywords = ["sqlx", "odbc", "database", "async", "sql"]
+categories = ["database", "asynchronous"]
+license = "MIT"

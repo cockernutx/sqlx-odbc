@@ -6,9 +6,7 @@ use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// Type information for an ODBC type.
 #[derive(Debug, Clone, Eq)]
-#[cfg_attr(feature = "offline", derive(serde::Serialize, serde::Deserialize))]
 pub struct OdbcTypeInfo {
-    #[cfg_attr(feature = "offline", serde(skip))]
     pub(crate) data_type: DataType,
 }
 
