@@ -3,15 +3,10 @@
 //! These tests require a running MS SQL Server instance.
 //! Use `docker compose -f compose.dev.yaml up -d mssql` to start one.
 //!
-//! ## Known Limitations
-//!
-//! The current architecture creates a new ODBC connection for each operation.
-//! This means:
-//! - Temp tables don't persist between operations (they're connection-scoped)
-//! - Transactions don't work across operations (BEGIN on one connection, COMMIT on another)
-//!
-//! Tests marked with `#[ignore]` document these limitations and will pass once
-//! connection persistence is implemented.
+//! The connection now uses a persistent ODBC connection, which means:
+//! - Temp tables persist within the same connection
+//! - Transactions work correctly across operations
+//! - Session state is maintained
 
 use sqlx_odbc::odbc::{OdbcConnectOptions, OdbcConnection};
 use sqlx_odbc::sqlx_core::connection::Connection;
@@ -93,11 +88,8 @@ async fn test_execute_select_version() {
     assert!(result.is_ok(), "Version query should succeed: {:?}", result.err());
 }
 
-// Note: Transaction tests are ignored because the current architecture
-// creates a new ODBC connection for each operation, so BEGIN TRANSACTION
-// happens on a different connection than COMMIT/ROLLBACK.
+// Transaction tests now work with persistent connections
 #[tokio::test]
-#[ignore = "Requires connection persistence - currently each operation uses a new connection"]
 async fn test_transaction_begin_commit() {
     let mut conn = connect().await;
     
@@ -113,7 +105,6 @@ async fn test_transaction_begin_commit() {
 }
 
 #[tokio::test]
-#[ignore = "Requires connection persistence - currently each operation uses a new connection"]
 async fn test_transaction_begin_rollback() {
     let mut conn = connect().await;
     
@@ -129,27 +120,32 @@ async fn test_transaction_begin_rollback() {
 }
 
 #[tokio::test]
-#[ignore = "Requires connection persistence - currently each operation uses a new connection"]
 async fn test_transaction_with_operations() {
     let mut conn = connect().await;
     
-    // Create a temp table
+    // Create a temp table - now works with persistent connection!
     conn.execute_raw("CREATE TABLE #test_tx (id INT, name NVARCHAR(50))")
         .await
         .expect("Create temp table should succeed");
     
-    // Begin transaction
-    let mut tx = conn.begin().await.expect("Begin should succeed");
-    
-    // Insert data within transaction
-    tx.execute_raw("INSERT INTO #test_tx VALUES (1, 'test')")
+    // Insert initial data
+    conn.execute_raw("INSERT INTO #test_tx VALUES (1, 'initial')")
         .await
         .expect("Insert should succeed");
     
-    // Rollback
+    // Begin transaction
+    let mut tx = conn.begin().await.expect("Begin should succeed");
+    
+    // Insert more data within transaction
+    tx.execute_raw("INSERT INTO #test_tx VALUES (2, 'in_transaction')")
+        .await
+        .expect("Insert in transaction should succeed");
+    
+    // Rollback - this should undo the second insert
     tx.rollback().await.expect("Rollback should succeed");
     
-    // Note: Temp table is scoped to connection, but data was rolled back
+    // Temp table still exists and has only the initial row
+    // (The second insert was rolled back)
 }
 
 #[tokio::test]
@@ -160,6 +156,33 @@ async fn test_multiple_queries_same_connection() {
         let result = conn.execute_raw(&format!("SELECT {} AS iteration", i)).await;
         assert!(result.is_ok(), "Query {} should succeed: {:?}", i, result.err());
     }
+}
+
+#[tokio::test]
+async fn test_temp_table_persistence() {
+    let mut conn = connect().await;
+    
+    // Create temp table
+    conn.execute_raw("CREATE TABLE #persist_test (id INT, data VARCHAR(50))")
+        .await
+        .expect("Create temp table should succeed");
+    
+    // Insert in one operation
+    conn.execute_raw("INSERT INTO #persist_test VALUES (1, 'first')")
+        .await
+        .expect("First insert should succeed");
+    
+    // Insert in another operation - temp table should still exist!
+    conn.execute_raw("INSERT INTO #persist_test VALUES (2, 'second')")
+        .await
+        .expect("Second insert should succeed");
+    
+    // Query in yet another operation
+    let row = conn.fetch_optional("SELECT COUNT(*) AS cnt FROM #persist_test").await;
+    assert!(row.is_ok(), "Query should succeed: {:?}", row.err());
+    assert!(row.unwrap().is_some(), "Should return a row with count");
+    
+    // This test verifies that the connection persists across operations
 }
 
 #[tokio::test]
@@ -192,45 +215,27 @@ async fn test_fetch_no_rows() {
     assert!(row.is_none(), "Should return no rows");
 }
 
-// Note: Temp tables (#) and global temp tables (##) are session/connection-scoped,
-// so they don't persist between operations in the current architecture.
-// Using real tables with unique names and cleanup for testing.
+// Now temp tables work correctly with persistent connection!
 #[tokio::test]
-async fn test_create_and_query_table() {
+async fn test_create_and_query_temp_table() {
     let mut conn = connect().await;
     
-    // Use a unique table name to avoid conflicts between test runs
-    let table_name = format!("test_data_{}", std::process::id());
-    
-    // Drop if exists from previous run
-    let _ = conn.execute_raw(&format!("DROP TABLE IF EXISTS {}", table_name)).await;
-    
-    // Create table
-    conn.execute_raw(&format!(
-        "CREATE TABLE {} (id INT PRIMARY KEY, value NVARCHAR(100))", 
-        table_name
-    ))
+    // Create temp table - no need for unique names or cleanup
+    conn.execute_raw("CREATE TABLE #test_data (id INT PRIMARY KEY, value NVARCHAR(100))")
         .await
-        .expect("Create table should succeed");
+        .expect("Create temp table should succeed");
     
     // Insert data
-    conn.execute_raw(&format!(
-        "INSERT INTO {} VALUES (1, 'first'), (2, 'second'), (3, 'third')",
-        table_name
-    ))
+    conn.execute_raw("INSERT INTO #test_data VALUES (1, 'first'), (2, 'second'), (3, 'third')")
         .await
         .expect("Insert should succeed");
     
     // Query data
-    let query = format!("SELECT * FROM {} WHERE id = 2", table_name);
-    let row = conn.fetch_optional(query.as_str()).await;
+    let row = conn.fetch_optional("SELECT * FROM #test_data WHERE id = 2").await;
     assert!(row.is_ok(), "Query should succeed: {:?}", row.err());
     assert!(row.unwrap().is_some(), "Should find row with id=2");
     
-    // Cleanup
-    conn.execute_raw(&format!("DROP TABLE IF EXISTS {}", table_name))
-        .await
-        .expect("Cleanup should succeed");
+    // Temp table is automatically dropped when connection closes
 }
 
 #[tokio::test]
@@ -263,30 +268,20 @@ async fn test_null_handling() {
 async fn test_unicode_data() {
     let mut conn = connect().await;
     
-    // Use real table with unique name
-    let table_name = format!("unicode_test_{}", std::process::id());
-    
-    // Drop if exists from previous run
-    let _ = conn.execute_raw(&format!("DROP TABLE IF EXISTS {}", table_name)).await;
-    
-    // Create table with unicode data
-    conn.execute_raw(&format!("CREATE TABLE {} (text NVARCHAR(100))", table_name))
+    // Use temp table - no cleanup needed
+    conn.execute_raw("CREATE TABLE #unicode_test (text NVARCHAR(100))")
         .await
-        .expect("Create table should succeed");
+        .expect("Create temp table should succeed");
     
-    conn.execute_raw(&format!("INSERT INTO {} VALUES (N'Hello 世界')", table_name))
+    conn.execute_raw("INSERT INTO #unicode_test VALUES (N'Hello 世界')")
         .await
         .expect("Insert unicode should succeed");
     
-    let query = format!("SELECT * FROM {}", table_name);
-    let row = conn.fetch_optional(query.as_str()).await;
+    let row = conn.fetch_optional("SELECT * FROM #unicode_test").await;
     assert!(row.is_ok(), "Query should succeed: {:?}", row.err());
     assert!(row.unwrap().is_some(), "Should return unicode row");
     
-    // Cleanup
-    conn.execute_raw(&format!("DROP TABLE IF EXISTS {}", table_name))
-        .await
-        .expect("Cleanup should succeed");
+    // Temp table is automatically dropped when connection closes
 }
 
 #[tokio::test]

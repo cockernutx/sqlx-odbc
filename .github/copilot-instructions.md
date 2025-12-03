@@ -4,7 +4,7 @@
 
 This is an ODBC database driver for SQLx, providing generic connectivity to any ODBC-compatible database through the `odbc-api` crate. The project implements the SQLx `Database` trait to enable async database operations over synchronous ODBC APIs.
 
-**Key Architecture Pattern**: Async wrapper over sync ODBC - all ODBC operations are wrapped in `tokio::task::spawn_blocking` to avoid blocking the async runtime.
+**Key Architecture Pattern**: Async wrapper over sync ODBC - all ODBC operations are wrapped in `tokio::task::spawn_blocking` to avoid blocking the async runtime. The connection is persistent and shared via `SharedConnection<'static>` (which wraps `Arc<Mutex<Connection>>`).
 
 ## Project Structure
 
@@ -20,41 +20,52 @@ This is an ODBC database driver for SQLx, providing generic connectivity to any 
 ODBC APIs are synchronous, but SQLx requires async. **Every ODBC operation MUST use `tokio::task::spawn_blocking`**:
 
 ```rust
-// Example from connection/executor.rs
-tokio::task::spawn_blocking(move || {
-    let conn = env.connect_with_connection_string(&conn_string, ...)?;
-    // ... ODBC operations ...
-})
-.await
-.map_err(|_| Error::WorkerCrashed)??;
+// Example from connection/mod.rs - the with_conn helper method
+pub(crate) async fn with_conn<R, F, S>(&mut self, operation: S, f: F) -> Result<R, Error>
+where
+    R: Send + 'static,
+    F: FnOnce(&mut odbc_api::Connection<'static>) -> Result<R, Error> + Send + 'static,
+    S: std::fmt::Display + Send + 'static,
+{
+    let conn = self.conn.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn_guard = conn.lock().map_err(|_| {
+            Error::Protocol(format!("ODBC {}: failed to lock connection", operation))
+        })?;
+        f(&mut conn_guard)
+    })
+    .await
+    .map_err(|_| Error::WorkerCrashed)?
+}
 ```
 
 **Why**: ODBC calls can block for extended periods (network I/O, query execution). Running them on the async runtime would stall other tasks.
 
-### 2. Global ODBC Environment Singleton
+### 2. Persistent Connection with SharedConnection
 
-The ODBC environment is created once using `OnceLock` in `connection/mod.rs`:
-
-```rust
-static ODBC_ENV: OnceLock<Arc<Environment>> = OnceLock::new();
-```
-
-**Never create multiple ODBC environments** - reuse the singleton via `get_odbc_environment()`.
-
-### 3. Connection Lifecycle Management
-
-Connections are NOT long-lived. The `OdbcConnectionInner` stores the connection string and recreates ODBC connections for each operation:
+The ODBC connection is persistent and wrapped in `SharedConnection<'static>` for thread-safe access:
 
 ```rust
-pub(crate) struct OdbcConnectionInner {
-    pub(crate) connection_string: String,
-    pub(crate) env: Arc<Environment>,
+/// A connection to an ODBC-accessible database.
+pub struct OdbcConnection {
+    /// The underlying ODBC connection (wrapped for thread safety via SharedConnection)
+    pub(crate) conn: SharedConnection<'static>,
+    /// Connection options
+    pub(crate) options: OdbcConnectOptions,
+    /// Current transaction depth
+    pub(crate) transaction_depth: usize,
+    /// Whether a rollback is needed
+    pub(crate) needs_rollback: bool,
 }
 ```
 
-This simplifies lifetime management in the async context. Each query execution creates a fresh ODBC connection, executes, and closes.
+`SharedConnection<'static>` is `odbc_api::SharedConnection` which internally uses `Arc<Mutex<Connection>>`. This allows:
+- **Connection persistence** - The same ODBC connection is reused across all operations
+- **Temp table support** - Session-scoped temp tables (`#table_name`) persist across queries
+- **Transaction support** - `BEGIN`/`COMMIT`/`ROLLBACK` work correctly on the same connection
+- **Thread-safe access** - The mutex ensures safe concurrent access from async tasks
 
-### 4. Type System Implementation
+### 3. Type System Implementation
 
 All ODBC type conversions follow this triadic pattern in `types/mod.rs`:
 
@@ -121,10 +132,10 @@ Buffer settings control fetch behavior (`options.rs`):
 
 ### Transaction Management
 
-Transactions use raw SQL (`transaction.rs`):
-- `BEGIN TRANSACTION` - start
-- `COMMIT` - commit
-- `ROLLBACK` - rollback
+Transactions use ODBC's native autocommit control (`transaction.rs`):
+- `conn.set_autocommit(false)` - begin transaction
+- `conn.commit()` + `conn.set_autocommit(true)` - commit
+- `conn.rollback()` + `conn.set_autocommit(true)` - rollback
 
 Track depth with `conn.transaction_depth` for nested transaction support.
 
@@ -155,14 +166,14 @@ Implement these key traits to integrate with SQLx:
 ## Common Pitfalls
 
 1. **Don't call ODBC APIs directly in async functions** - always wrap in `spawn_blocking`
-2. **Don't share ODBC connections across tasks** - they're not `Send` without `Arc<Mutex<>>`
+2. **Use `with_conn` helper** - it handles locking and `spawn_blocking` for you
 3. **Connection strings must include driver name** - e.g., `Driver={ODBC Driver 18 for SQL Server}`
 4. **SQLSTATE extraction requires string parsing** - use `extract_sqlstate()` in `error.rs`
 5. **Placeholder format is `?`** - not `$1`, `$2` like PostgreSQL (see `arguments.rs`)
 
 ## Key Files for Reference
 
-- `connection/mod.rs` - Singleton environment, connection establishment
+- `connection/mod.rs` - Connection establishment, `with_conn` helper, transaction methods
 - `connection/executor.rs` - Query execution, row fetching, `spawn_blocking` usage
 - `database.rs` - `OdbcArgumentValue` enum (all supported types)
 - `types/mod.rs` - Type encoding/decoding examples

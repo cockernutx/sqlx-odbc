@@ -17,8 +17,8 @@ impl TransactionManager for OdbcTransactionManager {
 
     fn begin<'c>(conn: &'c mut OdbcConnection, _statement: Option<Cow<'static, str>>) -> BoxFuture<'c, Result<(), Error>> {
         Box::pin(async move {
-            // Disable auto-commit to start a transaction
-            conn.execute_raw("BEGIN TRANSACTION").await?;
+            // Use ODBC's native autocommit control for reliable transaction management
+            conn.begin_blocking().await?;
             conn.transaction_depth += 1;
             Ok(())
         })
@@ -27,7 +27,7 @@ impl TransactionManager for OdbcTransactionManager {
     fn commit(conn: &mut OdbcConnection) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
             if conn.transaction_depth > 0 {
-                conn.execute_raw("COMMIT").await?;
+                conn.commit_blocking().await?;
                 conn.transaction_depth -= 1;
             }
             Ok(())
@@ -37,7 +37,7 @@ impl TransactionManager for OdbcTransactionManager {
     fn rollback(conn: &mut OdbcConnection) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
             if conn.transaction_depth > 0 {
-                conn.execute_raw("ROLLBACK").await?;
+                conn.rollback_blocking().await?;
                 conn.transaction_depth -= 1;
             }
             Ok(())

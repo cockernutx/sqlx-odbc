@@ -4,17 +4,15 @@ use crate::odbc::{
     Odbc, OdbcColumn, OdbcConnection, OdbcQueryResult, OdbcRow, OdbcStatement,
     OdbcTypeInfo, OdbcValue, OdbcValueData,
 };
-use crate::odbc::connection::OdbcConnectionInner;
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
-use odbc_api::{Cursor, ResultSetMetadata};
+use odbc_api::{Cursor, ResultSetMetadata, SharedConnection};
 use sqlx_core::describe::Describe;
 use sqlx_core::error::Error;
 use sqlx_core::executor::{Execute, Executor};
 use sqlx_core::Either;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -31,10 +29,10 @@ impl<'c> Executor<'c> for &'c mut OdbcConnection {
     {
         let sql = query.sql().to_string();
         let _arguments = query.take_arguments();
-        let inner = self.inner.clone();
+        let conn = self.conn.clone();
 
         Box::pin(async_stream::try_stream! {
-            let rows = execute_query(inner, sql).await?;
+            let rows = execute_query(conn, sql).await?;
             for row in rows {
                 yield Either::Right(row);
             }
@@ -84,11 +82,11 @@ impl<'c> Executor<'c> for &'c mut OdbcConnection {
         'c: 'e,
     {
         let sql = sql.to_string();
-        let inner = self.inner.clone();
+        let conn = self.conn.clone();
 
         Box::pin(async move {
             let result = tokio::task::spawn_blocking(move || {
-                describe_query(inner, sql)
+                describe_query(conn, sql)
             })
             .await
             .map_err(|_| Error::WorkerCrashed)??;
@@ -98,23 +96,18 @@ impl<'c> Executor<'c> for &'c mut OdbcConnection {
     }
 }
 
-/// Execute a query and return rows
+/// Execute a query and return rows (using persistent connection)
 async fn execute_query(
-    inner: Arc<Mutex<OdbcConnectionInner>>,
+    conn: SharedConnection<'static>,
     sql: String,
 ) -> Result<Vec<OdbcRow>, Error> {
     tokio::task::spawn_blocking(move || {
-        let inner = inner.lock().map_err(|_| {
+        let conn_guard = conn.lock().map_err(|_| {
             Error::Protocol("Failed to lock ODBC connection".into())
         })?;
 
-        // Create a new connection for this operation
-        let conn = inner.env
-            .connect_with_connection_string(&inner.connection_string, odbc_api::ConnectionOptions::default())
-            .map_err(|e| Error::Protocol(e.to_string()))?;
-
-        // Execute the query
-        match conn.execute(&sql, (), None) {
+        // Execute the query using the persistent connection
+        match conn_guard.execute(&sql, (), None) {
             Ok(Some(mut cursor)) => {
                 let mut rows = Vec::new();
                 
@@ -171,22 +164,17 @@ async fn execute_query(
     .map_err(|_| Error::WorkerCrashed)?
 }
 
-/// Describe a query to get column and parameter info
+/// Describe a query to get column and parameter info (using persistent connection)
 fn describe_query(
-    inner: Arc<Mutex<OdbcConnectionInner>>,
+    conn: SharedConnection<'static>,
     sql: String,
 ) -> Result<Describe<Odbc>, Error> {
-    let inner = inner.lock().map_err(|_| {
+    let conn_guard = conn.lock().map_err(|_| {
         Error::Protocol("Failed to lock ODBC connection".into())
     })?;
 
-    // Create a new connection for this operation
-    let conn = inner.env
-        .connect_with_connection_string(&inner.connection_string, odbc_api::ConnectionOptions::default())
-        .map_err(|e| Error::Protocol(e.to_string()))?;
-
-    // Prepare the statement to get metadata
-    let mut prepared = conn.prepare(&sql)
+    // Prepare the statement to get metadata using persistent connection
+    let mut prepared = conn_guard.prepare(&sql)
         .map_err(|e| Error::Protocol(e.to_string()))?;
 
     // Get column information

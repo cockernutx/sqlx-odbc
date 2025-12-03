@@ -13,10 +13,10 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use sqlx_odbc::{OdbcConnectOptions, OdbcConnection};
-//! use sqlx_core::connection::Connection;
+//! use sqlx_odbc::odbc::{OdbcConnectOptions, OdbcConnection};
+//! use sqlx_odbc::sqlx_core::connection::Connection;
 //!
-//! # async fn example() -> Result<(), sqlx_core::Error> {
+//! # async fn example() -> Result<(), sqlx_odbc::sqlx_core::Error> {
 //! let options = OdbcConnectOptions::new(
 //!     "Driver={ODBC Driver 18 for SQL Server};Server=localhost;Database=test;UID=sa;PWD=password"
 //! );
