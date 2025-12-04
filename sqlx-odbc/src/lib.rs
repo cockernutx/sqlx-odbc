@@ -9,6 +9,7 @@
 //! - **Async operations** - Non-blocking database operations using Tokio
 //! - **SQLx compatibility** - Full integration with SQLx's type system and traits
 //! - **Database-specific migrations** - Optional support for MSSQL and PostgreSQL migrations
+//! - **Query macros** - Compile-time verified SQL queries (requires `query` feature)
 //!
 //! ## Example
 //!
@@ -29,12 +30,18 @@
 //!
 //! - `macros` - Enable derive macros (includes `derive`)
 //! - `derive` - Enable the `FromRow` derive macro
+//! - `query` - Enable compile-time verified query macros (`query!`, `query_as!`, etc.)
 //! - `mssql-migrate` - Enable Microsoft SQL Server migration support
 //! - `postgres-migrate` - Enable PostgreSQL migration support
 //! - `serde` - Enable serde serialization support
 //! - `offline` - Enable offline mode support
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+// Query macros module (when query feature is enabled)
+#[cfg(feature = "query")]
+#[doc(hidden)]
+pub mod macros;
 
 // Re-export the FromRow derive macro when the derive feature is enabled
 #[cfg(feature = "derive")]
@@ -46,3 +53,9 @@ pub use sqlx_odbc_core::sqlx_core::from_row::FromRow;
 
 // Re-export everything from sqlx-odbc-core
 pub use sqlx_odbc_core::*;
+
+// Re-export query helpers at the crate root for convenience
+pub use sqlx_odbc_core::odbc::query::{
+    query, query_as, query_as_with, query_scalar, query_scalar_with, query_with, Query, QueryAs,
+    QueryBuilder, QueryScalar,
+};

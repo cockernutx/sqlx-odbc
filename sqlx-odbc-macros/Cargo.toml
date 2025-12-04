@@ -13,13 +13,14 @@ categories = { workspace = true }
 license = { workspace = true }
 
 [package.metadata.docs.rs]
-features = ["derive"]
+features = ["derive", "query"]
 
 [lib]
 proc-macro = true
 
 [features]
 derive = ["dep:heck"]
+query = []
 
 [dependencies]
 heck = { version = "0.5", optional = true }

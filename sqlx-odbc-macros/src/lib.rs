@@ -9,6 +9,10 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
 mod from_row;
 
+#[cfg(feature = "query")]
+#[cfg_attr(docsrs, doc(cfg(feature = "query")))]
+mod query;
+
 /// Derive macro for implementing `FromRow` trait.
 ///
 /// This macro generates an implementation of `sqlx_core::from_row::FromRow`
@@ -38,6 +42,19 @@ mod from_row;
 #[proc_macro_derive(FromRow, attributes(sqlx))]
 pub fn derive_from_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     from_row::expand_derive_from_row(input.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Internal proc macro for expanding SQL queries.
+///
+/// This macro is not intended to be used directly. Instead, use the wrapper macros
+/// like `query!`, `query_as!`, `query_scalar!`, etc.
+#[cfg(feature = "query")]
+#[cfg_attr(docsrs, doc(cfg(feature = "query")))]
+#[proc_macro]
+pub fn expand_query(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    query::expand_query(input.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

@@ -13,7 +13,7 @@ categories = { workspace = true }
 license = { workspace = true }
 
 [package.metadata.docs.rs]
-features = ["macros", "mssql-migrate", "postgres-migrate"]
+features = ["macros", "query", "mssql-migrate", "postgres-migrate"]
 
 [dependencies]
 sqlx-odbc-core = { path = "../sqlx-odbc-core", version = "=0.1.0" }
@@ -25,6 +25,7 @@ default = []
 # Macro features
 macros = ["derive"]
 derive = ["dep:sqlx-odbc-macros", "sqlx-odbc-macros/derive"]
+query = ["dep:sqlx-odbc-macros", "sqlx-odbc-macros/query"]
 
 # Database-specific migration features (pass through to core)
 mssql-migrate = ["sqlx-odbc-core/mssql-migrate"]

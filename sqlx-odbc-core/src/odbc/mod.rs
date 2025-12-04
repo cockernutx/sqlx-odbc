@@ -37,6 +37,7 @@ mod connection;
 mod database;
 mod error;
 mod options;
+pub mod query;
 mod query_result;
 mod row;
 mod statement;
